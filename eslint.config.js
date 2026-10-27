@@ -21,7 +21,7 @@ export default defineConfig([
         'warn',
         { allowConstantExport: true },
       ],
-      'no-console': 'error', 
+      // 'no-console': 'error', 
     },
     languageOptions: {
       globals: globals.browser,

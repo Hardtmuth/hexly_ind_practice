@@ -4,6 +4,8 @@ import reactLogo from './assets/react.svg'
 import viteLogo from './assets/vite.svg'
 import './App.css'
 
+import { WebcamCapture } from './components/Camera'
+
 function App() {
   const [count, setCount] = useState(0)
 
@@ -28,6 +30,10 @@ function App() {
         >
           Count is {count}
         </button>
+        <button type="button" className="counter" onClick={() => setCount((count) => count - 1)}>
+          Decrement
+        </button>
+        <WebcamCapture />
       </section>
 
       <div className="ticks"></div>
