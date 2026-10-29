@@ -1,5 +1,6 @@
-import React, { useEffect, useRef, useState } from 'react'
-import { useTranslation } from '../i18n/useTranslation'
+import React, { useEffect, useRef, useState } from "react"
+import { jsPDF } from "jspdf"
+import { useTranslation } from "../i18n/useTranslation"
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 declare global {
@@ -9,13 +10,20 @@ declare global {
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
+interface ScannedPage {
+  id: string
+  src: string // Base64 строка снимка
+  rotation: number // Угол поворота: 0, 90, 180, 270
+  type: "scan" | "photo" // Тип для выбора формата скачивания
+}
+
 export const WebcamCapture: React.FC = () => {
   const { t } = useTranslation()
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null)
 
-  const [photo, setPhoto] = useState<string | null>(null)
+  const [pages, setPages] = useState<ScannedPage[]>([])
   const [error, setError] = useState<string | null>(null)
   const [isOpenCvReady, setIsOpenCvReady] = useState<boolean>(false)
 
@@ -50,9 +58,13 @@ export const WebcamCapture: React.FC = () => {
 
     const startCamera = async () => {
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ 
-          video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'environment' }, 
-          audio: false 
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            width: { ideal: 640 },
+            height: { ideal: 480 },
+            facingMode: "environment",
+          },
+          audio: false,
         })
         if (videoRef.current) {
           videoRef.current.srcObject = stream
@@ -67,7 +79,7 @@ export const WebcamCapture: React.FC = () => {
           }
         }
       } catch (err) {
-        setError(t('errors.cameraAccessDenied'))
+        setError(t("errors.cameraAccessDenied"))
         console.error(err)
       }
     }
@@ -90,7 +102,12 @@ export const WebcamCapture: React.FC = () => {
 
       const processVideo = () => {
         try {
-          if (!videoRef.current || videoRef.current.paused || videoRef.current.ended) return
+          if (
+            !videoRef.current ||
+            videoRef.current.paused ||
+            videoRef.current.ended
+          )
+            return
 
           cap.read(src)
           cv.cvtColor(src, dst, cv.COLOR_RGBA2GRAY)
@@ -100,10 +117,24 @@ export const WebcamCapture: React.FC = () => {
           cv.Canny(dst, dst, 75, 200, 3, false)
 
           const M = cv.Mat.ones(3, 3, cv.CV_8U)
-          cv.dilate(dst, dst, M, new cv.Point(-1, -1), 1, cv.BORDER_CONSTANT, cv.morphologyDefaultBorderValue())
+          cv.dilate(
+            dst,
+            dst,
+            M,
+            new cv.Point(-1, -1),
+            1,
+            cv.BORDER_CONSTANT,
+            cv.morphologyDefaultBorderValue(),
+          )
           M.delete()
 
-          cv.findContours(dst, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE)
+          cv.findContours(
+            dst,
+            contours,
+            hierarchy,
+            cv.RETR_LIST,
+            cv.CHAIN_APPROX_SIMPLE,
+          )
 
           let maxArea = 0
 
@@ -115,7 +146,7 @@ export const WebcamCapture: React.FC = () => {
             const contour = contours.get(i)
             const area = cv.contourArea(contour)
 
-            if (area > (video.width * video.height * 0.1)) {
+            if (area > video.width * video.height * 0.1) {
               const peri = cv.arcLength(contour, true)
               const approx = new cv.Mat()
 
@@ -132,7 +163,9 @@ export const WebcamCapture: React.FC = () => {
             contour.delete()
           }
 
-          const ctx = overlayCanvas.getContext('2d', { willReadFrequently: true })
+          const ctx = overlayCanvas.getContext("2d", {
+            willReadFrequently: true,
+          })
           if (ctx) {
             ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height)
 
@@ -141,7 +174,7 @@ export const WebcamCapture: React.FC = () => {
               // Сохраняем плоский массив из 8 чисел: [x1,y1, x2,y2, x3,y3, x4,y4]
               lastPointsRef.current = Array.from(pageContour.data32S)
 
-              ctx.strokeStyle = '#00FF00'
+              ctx.strokeStyle = "#00FF00"
               ctx.lineWidth = 4
               ctx.beginPath()
 
@@ -161,7 +194,7 @@ export const WebcamCapture: React.FC = () => {
 
           animationFrameId = requestAnimationFrame(processVideo)
         } catch (e) {
-          console.error(t('errors.opencvFrameProcessing'), e)
+          console.error(t("errors.opencvFrameProcessing"), e)
         }
       }
 
@@ -175,7 +208,7 @@ export const WebcamCapture: React.FC = () => {
     return () => {
       cancelAnimationFrame(animationFrameId)
       if (stream) {
-        stream.getTracks().forEach(track => track.stop())
+        stream.getTracks().forEach((track) => track.stop())
       }
       if (src) src.delete()
       if (dst) dst.delete()
@@ -191,7 +224,7 @@ export const WebcamCapture: React.FC = () => {
     const canvas = canvasRef.current
 
     if (video && canvas) {
-      const ctx = canvas.getContext('2d', { willReadFrequently: true })
+      const ctx = canvas.getContext("2d", { willReadFrequently: true })
       if (ctx) {
         canvas.width = video.videoWidth
         canvas.height = video.videoHeight
@@ -201,7 +234,13 @@ export const WebcamCapture: React.FC = () => {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
         ctx.setTransform(1, 0, 0, 1, 0, 0)
 
-        setPhoto(canvas.toDataURL('image/png'))
+        const newPage: ScannedPage = {
+          id: Date.now().toString(),
+          src: canvas.toDataURL("image/png"),
+          rotation: 0,
+          type: "photo",
+        }
+        setPages((prev) => [...prev, newPage]) // Добавляем в массив страниц
       }
     }
   }
@@ -215,27 +254,23 @@ export const WebcamCapture: React.FC = () => {
     if (!video || !canvas || !cv || !lastPointsRef.current) return
 
     try {
-      // 1. Извлекаем 4 точки из рефа
       const pts = lastPointsRef.current
-      const p1 = { x: pts[0], y: pts[1] }
-      const p2 = { x: pts[2], y: pts[3] }
-      const p3 = { x: pts[4], y: pts[5] }
-      const p4 = { x: pts[6], y: pts[7] }
-      const origPoints = [p1, p2, p3, p4]
+      const origPoints = [
+        { x: pts[0], y: pts[1] },
+        { x: pts[2], y: pts[3] },
+        { x: pts[4], y: pts[5] },
+        { x: pts[6], y: pts[7] },
+      ]
 
-      // 2. Сортируем точки, чтобы точно знать где какой угол (TL, TR, BR, BL)
-      // Сортируем по X, чтобы отделить левые точки от правых
       const sortedByX = [...origPoints].sort((a, b) => a.x - b.x)
       const leftMost = [sortedByX[0], sortedByX[1]]
       const rightMost = [sortedByX[2], sortedByX[3]]
 
-      // Внутри левых и правых пар сортируем по Y
       const tl = leftMost[0].y < leftMost[1].y ? leftMost[0] : leftMost[1]
       const bl = leftMost[0].y < leftMost[1].y ? leftMost[1] : leftMost[0]
       const tr = rightMost[0].y < rightMost[1].y ? rightMost[0] : rightMost[1]
       const br = rightMost[0].y < rightMost[1].y ? rightMost[1] : rightMost[0]
 
-      // 3. Вычисляем целевые пропорции результирующего А4 (берем максимум из сторон)
       const widthA = Math.hypot(br.x - bl.x, br.y - bl.y)
       const widthB = Math.hypot(tr.x - tl.x, tr.y - tl.y)
       const maxWidth = Math.max(widthA, widthB)
@@ -244,42 +279,62 @@ export const WebcamCapture: React.FC = () => {
       const heightB = Math.hypot(tl.x - bl.x, tl.y - bl.y)
       const maxHeight = Math.max(heightA, heightB)
 
-      // Set canvas size
       canvas.width = maxWidth
       canvas.height = maxHeight
 
-      // 4. Захватываем текущий чистый кадр из видео в матрицу OpenCV
-      const imageSrc = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4)
+      const imageSrc = new cv.Mat(
+        video.videoHeight,
+        video.videoWidth,
+        cv.CV_8UC4,
+      )
       const imageDst = new cv.Mat(maxHeight, maxWidth, cv.CV_8UC4)
 
-      // Напрямую берем кадр из HTMLVideoElement
       const tempCap = new cv.VideoCapture(video)
       tempCap.read(imageSrc)
 
-      // 5. Проводим трансформацию геометрии
-      const srcCoords = cv.matFromArray(4, 1, cv.CV_32FC2, [tl.x, tl.y, tr.x, tr.y, br.x, br.y, bl.x, bl.y])
-      const dstCoords = cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, maxWidth, 0, maxWidth, maxHeight, 0, maxHeight])
+      const srcCoords = cv.matFromArray(4, 1, cv.CV_32FC2, [
+        tl.x,
+        tl.y,
+        tr.x,
+        tr.y,
+        br.x,
+        br.y,
+        bl.x,
+        bl.y,
+      ])
+      const dstCoords = cv.matFromArray(4, 1, cv.CV_32FC2, [
+        0,
+        0,
+        maxWidth,
+        0,
+        maxWidth,
+        maxHeight,
+        0,
+        maxHeight,
+      ])
 
       const dsize = new cv.Size(maxWidth, maxHeight)
       const M = cv.getPerspectiveTransform(srcCoords, dstCoords)
 
-      cv.warpPerspective(imageSrc, imageDst, M, dsize, cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar())
-
-      // 6. Отрисовываем матрицу на холст
+      cv.warpPerspective(
+        imageSrc,
+        imageDst,
+        M,
+        dsize,
+        cv.INTER_LINEAR,
+        cv.BORDER_CONSTANT,
+        new cv.Scalar(),
+      )
       cv.imshow(canvas, imageDst)
 
-      // Так как оригинальный поток не отзеркален, а мы хотим видеть его привычно:
-      const ctx = canvas.getContext('2d', { willReadFrequently: true })
+      const ctx = canvas.getContext("2d", { willReadFrequently: true })
       if (ctx) {
-        // Создаем временную копию отсканированного кадра
-        const tempCanvas = document.createElement('canvas')
+        const tempCanvas = document.createElement("canvas")
         tempCanvas.width = canvas.width
         tempCanvas.height = canvas.height
-        const tempCtx = tempCanvas.getContext('2d')
+        const tempCtx = tempCanvas.getContext("2d")
         if (tempCtx) {
           tempCtx.drawImage(canvas, 0, 0)
-
-          // Переворачиваем результат обратно для пользователя, убирая зеркальный эффект камеры
           ctx.clearRect(0, 0, canvas.width, canvas.height)
           ctx.translate(canvas.width, 0)
           ctx.scale(-1, 1)
@@ -287,77 +342,224 @@ export const WebcamCapture: React.FC = () => {
           ctx.setTransform(1, 0, 0, 1, 0, 0)
         }
       }
-      setPhoto(canvas.toDataURL('image/png'))
+
+      const newPage: ScannedPage = {
+        id: Date.now().toString(),
+        src: canvas.toDataURL("image/png"),
+        rotation: 0,
+        type: "scan",
+      }
+      setPages((prev) => [...prev, newPage]) // Добавляем в массив страниц
 
       imageSrc.delete()
       imageDst.delete()
       srcCoords.delete()
       dstCoords.delete()
       M.delete()
-      } catch (e) {
-        console.error(t('errors.opencvPerspectiveCorrection'), e)
+    } catch (e) {
+      console.error("Ошибка выпрямления перспективы:", e)
+    }
+  }
+
+  // Поворот страницы на 90 градусов
+  const rotatePage = (id: string) => {
+    setPages((prev) =>
+      prev.map((page) =>
+        page.id === id
+          ? { ...page, rotation: (page.rotation + 90) % 360 }
+          : page,
+      ),
+    )
+  }
+
+  // Удаление страницы
+  const deletePage = (id: string) => {
+    setPages((prev) => prev.filter((page) => page.id !== id))
+  }
+
+  // Применение физического разворота к картинке перед экспортом
+  const getRenderedPageCanvas = (
+    page: ScannedPage,
+  ): Promise<HTMLCanvasElement> => {
+    return new Promise((resolve) => {
+      const img = new Image()
+      img.onload = () => {
+        const canvas = document.createElement("canvas")
+        const ctx = canvas.getContext("2d")
+        if (!ctx) return resolve(canvas)
+
+        if (page.rotation === 90 || page.rotation === 270) {
+          canvas.width = img.height
+          canvas.height = img.width
+        } else {
+          canvas.width = img.width
+          canvas.height = img.height
+        }
+
+        ctx.translate(canvas.width / 2, canvas.height / 2)
+        ctx.rotate((page.rotation * Math.PI) / 180)
+        ctx.drawImage(img, -img.width / 2, -img.height / 2)
+        resolve(canvas)
+      }
+      img.src = page.src
+    })
+  }
+
+  // Функция скачивания (Умный многостраничный экспорт)
+  const downloadAll = async () => {
+    if (pages.length === 0) return
+
+    // Если первая страница — скан А4, собираем всё в один многостраничный PDF
+    if (pages[0].type === "scan") {
+      const pdf = new jsPDF("p", "mm", "a4")
+
+      for (let i = 0; i < pages.length; i++) {
+        const renderedCanvas = await getRenderedPageCanvas(pages[i])
+        const imgData = renderedCanvas.toDataURL("image/jpeg", 1.0)
+
+        if (i > 0) pdf.addPage()
+
+        const pdfWidth = pdf.internal.pageSize.getWidth()
+        const pdfHeight = pdf.internal.pageSize.getHeight()
+        pdf.addImage(imgData, "JPEG", 0, 0, pdfWidth, pdfHeight)
+      }
+      pdf.save("scanned-doc.pdf")
+    } else {
+      // Если это просто снимки, скачиваем их архивом картинок (или поочередно PNG)
+      for (let i = 0; i < pages.length; i++) {
+        const renderedCanvas = await getRenderedPageCanvas(pages[i])
+        const link = document.createElement("a")
+        link.download = `photo-capture-${i + 1}.png`
+        link.href = renderedCanvas.toDataURL("image/png")
+        link.click()
       }
     }
+  }
 
-    return (
+  // Функция вывода на печать
+  const printPages = async () => {
+    if (pages.length === 0) return
+
+    const printWindow = window.open("", "_blank")
+    if (!printWindow) return
+
+    printWindow.document.write(
+      "<html><head><title>Печать</title><style>body{margin:0display:flexflex-direction:columnalign-items:center}img{max-width:100%page-break-after:alwaysmargin-bottom:20px}</style></head><body>",
+    )
+
+    for (const page of pages) {
+      const renderedCanvas = await getRenderedPageCanvas(page)
+      printWindow.document.write(
+        `<img src="${renderedCanvas.toDataURL("image/png")}" />`,
+      )
+    }
+
+    printWindow.document.write("</body></html>")
+    printWindow.document.close()
+    printWindow.focus()
+
+    setTimeout(() => {
+      printWindow.print()
+      printWindow.close()
+    }, 500)
+  }
+
+  return (
     <div className="main-container">
-      {/* Сообщения об ошибках и статусе загрузки */}
       {error && <p className="error-message">{error}</p>}
-      {!isOpenCvReady && <p className="loading-message">{t('loading')}</p>}
+      {!isOpenCvReady && (
+        <p className="loading-message">
+          Загрузка модуля компьютерного зрения OpenCV...
+        </p>
+      )}
 
       <div className="video-container">
-        {/* БЛОК С КАМЕРОЙ И ОВЕРЛЕЕМ */}
+        {/* Камера */}
         <div>
-          <h3>{t('mainPage.realTimeCamera')}</h3>
+          <h3>{t("mainPage.realTimeCamera")}</h3>
           <div className="video-wrapper">
-            <video 
-              ref={videoRef} 
-              autoPlay 
-              playsInline 
-              muted 
-              className="video-stream" 
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              muted
+              className="video-stream"
             />
-            {/* Холст, на котором OpenCV рисует зеленую рамку А4 поверх видео */}
-            <canvas
-              ref={overlayCanvasRef}
-              className="overlay-canvas"
-            />
+            <canvas ref={overlayCanvasRef} className="overlay-canvas" />
           </div>
         </div>
 
-        {/* Результат снимка (Превью) */}
-        {photo && (
-          <div>
-            <h3>{t('mainPage.picturePreview')}</h3>
-            <img 
-              src={photo}
-              alt={t('mainPage.picturePreview')} 
-              className="photo-preview" 
-            />
+        {/* Боковая галерея страниц */}
+        <div className="pages-gallery-wrapper">
+          <h3>Отсканированные страницы ({pages.length})</h3>
+          <div className="pages-grid">
+            {pages.map((page, index) => (
+              <div key={page.id} className="page-card">
+                <div className="page-img-container">
+                  <img
+                    src={page.src}
+                    alt={`Страница ${index + 1}`}
+                    className="gallery-photo"
+                    style={{ transform: `rotate(${page.rotation}deg)` }}
+                  />
+                  <span className="page-badge">{index + 1}</span>
+                </div>
+                <div className="page-card-actions">
+                  <button
+                    onClick={() => rotatePage(page.id)}
+                    title="Повернуть на 90°"
+                  >
+                    🔄
+                  </button>
+                  <button
+                    onClick={() => deletePage(page.id)}
+                    className="delete-btn"
+                    title="Удалить"
+                  >
+                    ❌
+                  </button>
+                </div>
+              </div>
+            ))}
+            {pages.length === 0 && (
+              <p className="empty-gallery-text">
+                Документов нет. Сделайте фото или отсканируйте А4.
+              </p>
+            )}
           </div>
-        )}
+        </div>
       </div>
 
-      {/* КНОПКИ УПРАВЛЕНИЯ */}
+      {/* Кнопки добавления кадров */}
       <div className="button-group">
         <button
           className="take-photo-button"
-          onClick={takeNormalPhoto} 
+          onClick={takeNormalPhoto}
           disabled={!isOpenCvReady}
         >
-          {t('mainPage.takePhotoButton')}
+          Добавить фото 📸
         </button>
-
         <button
           className="scan-photo-button"
-          onClick={takeCroppedPhoto} 
+          onClick={takeCroppedPhoto}
           disabled={!isOpenCvReady || !hasDocumentInFrame}
         >
-          {t('mainPage.scanDocument')}
+          Добавить страницу А4 📄
         </button>
       </div>
 
-      {/* Скрытый холст для внутренней математической обработки фото */}
+      {/* Панель экспорта (появляется, когда есть хоть 1 страница) */}
+      {pages.length > 0 && (
+        <div className="document-actions-group">
+          <button className="action-btn download-btn" onClick={downloadAll}>
+            Скачать результат ({pages[0].type === "scan" ? "PDF" : "PNG"}) 💾
+          </button>
+          <button className="action-btn print-btn" onClick={printPages}>
+            Распечатать документ 🖨️
+          </button>
+        </div>
+      )}
+
       <canvas ref={canvasRef} className="hidden-canvas" />
     </div>
   )
