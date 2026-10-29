@@ -240,7 +240,7 @@ export const WebcamCapture: React.FC = () => {
           rotation: 0,
           type: "photo",
         }
-        setPages((prev) => [...prev, newPage]) // Добавляем в массив страниц
+        setPages((prev) => [...prev, newPage])
       }
     }
   }
@@ -349,7 +349,7 @@ export const WebcamCapture: React.FC = () => {
         rotation: 0,
         type: "scan",
       }
-      setPages((prev) => [...prev, newPage]) // Добавляем в массив страниц
+      setPages((prev) => [...prev, newPage])
 
       imageSrc.delete()
       imageDst.delete()
@@ -357,7 +357,7 @@ export const WebcamCapture: React.FC = () => {
       dstCoords.delete()
       M.delete()
     } catch (e) {
-      console.error("Ошибка выпрямления перспективы:", e)
+      console.error(t("errors.opencvPerspectiveCorrection"), e)
     }
   }
 
@@ -440,28 +440,43 @@ export const WebcamCapture: React.FC = () => {
   const printPages = async () => {
     if (pages.length === 0) return
 
-    const printWindow = window.open("", "_blank")
-    if (!printWindow) return
+    // 1. Создаем скрытый iframe
+    const iframe = document.createElement('iframe')
+    iframe.style.position = 'fixed'
+    iframe.style.right = '0'
+    iframe.style.bottom = '0'
+    iframe.style.width = '0'
+    iframe.style.height = '0'
+    iframe.style.border = 'none'
+    document.body.appendChild(iframe)
 
-    printWindow.document.write(
-      "<html><head><title>Печать</title><style>body{margin:0display:flexflex-direction:columnalign-items:center}img{max-width:100%page-break-after:alwaysmargin-bottom:20px}</style></head><body>",
-    )
+    const iframeDoc = iframe.contentWindow?.document
+    if (!iframeDoc) return
 
+    // 2. Генерируем элементы через DOM API
+    const style = iframeDoc.createElement('style')
+    style.textContent = `
+      body { margin: 0; display: flex; flex-direction: column; align-items: center; }
+      img { max-width: 100%; page-break-after: always; margin-bottom: 20px; }
+    `
+    iframeDoc.head.appendChild(style)
+
+    // 3. Добавляем картинки
     for (const page of pages) {
       const renderedCanvas = await getRenderedPageCanvas(page)
-      printWindow.document.write(
-        `<img src="${renderedCanvas.toDataURL("image/png")}" />`,
-      )
+      const img = iframeDoc.createElement('img')
+      img.src = renderedCanvas.toDataURL('image/png')
+      iframeDoc.body.appendChild(img)
     }
 
-    printWindow.document.write("</body></html>")
-    printWindow.document.close()
-    printWindow.focus()
+    // 4. Печатаем и удаляем iframe
+    iframe.contentWindow?.focus()
+    iframe.contentWindow?.print()
 
+    // Удаляем элемент из DOM через секунду, чтобы он не засорял память
     setTimeout(() => {
-      printWindow.print()
-      printWindow.close()
-    }, 500)
+      document.body.removeChild(iframe)
+    }, 1000)
   }
 
   return (
@@ -469,7 +484,7 @@ export const WebcamCapture: React.FC = () => {
       {error && <p className="error-message">{error}</p>}
       {!isOpenCvReady && (
         <p className="loading-message">
-          Загрузка модуля компьютерного зрения OpenCV...
+          {t("loading")}
         </p>
       )}
 
@@ -491,14 +506,14 @@ export const WebcamCapture: React.FC = () => {
 
         {/* Боковая галерея страниц */}
         <div className="pages-gallery-wrapper">
-          <h3>Отсканированные страницы ({pages.length})</h3>
+          <h3>{`${t("mainPage.scanHeader")} (${pages.length})`}</h3>
           <div className="pages-grid">
             {pages.map((page, index) => (
               <div key={page.id} className="page-card">
                 <div className="page-img-container">
                   <img
                     src={page.src}
-                    alt={`Страница ${index + 1}`}
+                    alt={`${t("mainPage.page")} ${index + 1}`}
                     className="gallery-photo"
                     style={{ transform: `rotate(${page.rotation}deg)` }}
                   />
@@ -507,23 +522,23 @@ export const WebcamCapture: React.FC = () => {
                 <div className="page-card-actions">
                   <button
                     onClick={() => rotatePage(page.id)}
-                    title="Повернуть на 90°"
+                    title={t("mainPage.rotateButton")}
                   >
-                    🔄
+                    {t("mainPage.rotateButton")}
                   </button>
                   <button
                     onClick={() => deletePage(page.id)}
                     className="delete-btn"
-                    title="Удалить"
+                    title={t("mainPage.deleteButton")}
                   >
-                    ❌
+                    {t("mainPage.deleteButton")}
                   </button>
                 </div>
               </div>
             ))}
             {pages.length === 0 && (
               <p className="empty-gallery-text">
-                Документов нет. Сделайте фото или отсканируйте А4.
+                {t("mainPage.hasNoDocuments")}
               </p>
             )}
           </div>
@@ -537,14 +552,14 @@ export const WebcamCapture: React.FC = () => {
           onClick={takeNormalPhoto}
           disabled={!isOpenCvReady}
         >
-          Добавить фото 📸
+          {t("mainPage.takePhotoButton")}
         </button>
         <button
           className="scan-photo-button"
           onClick={takeCroppedPhoto}
           disabled={!isOpenCvReady || !hasDocumentInFrame}
         >
-          Добавить страницу А4 📄
+          {t("mainPage.addPage")}
         </button>
       </div>
 
@@ -552,10 +567,10 @@ export const WebcamCapture: React.FC = () => {
       {pages.length > 0 && (
         <div className="document-actions-group">
           <button className="action-btn download-btn" onClick={downloadAll}>
-            Скачать результат ({pages[0].type === "scan" ? "PDF" : "PNG"}) 💾
+            {`${t("mainPage.download")} (${pages[0].type === "scan" ? t("mainPage.pdf") : t("mainPage.png")}) ${t("mainPage.downloadIcon")}`}
           </button>
           <button className="action-btn print-btn" onClick={printPages}>
-            Распечатать документ 🖨️
+            {t("mainPage.print")}
           </button>
         </div>
       )}
