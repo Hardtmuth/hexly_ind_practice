@@ -10,6 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@pechat-tut/ui": "file:./pechat-ui",
     "i18next": "^26.5.11",
     "jspdf": "^4.2.1",
     "react": "^19.3.1",

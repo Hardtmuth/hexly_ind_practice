@@ -210,3 +210,25 @@ button:disabled {
 .hidden-canvas {
   display: none;
 }
+
+/* Scanner screen: captured pages list */
+.scanner-review-page {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.scanner-review-thumb {
+  width: 100%;
+  max-width: 240px;
+  border-radius: 12px;
+  border: 1px solid #dbe5ef;
+  background: #f4f8fc;
+}
+
+.scanner-review-actions {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}

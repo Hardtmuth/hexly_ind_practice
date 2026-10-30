@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+PECHAT_TUT_UI_LIBRARY_1_0
+pechat-ui

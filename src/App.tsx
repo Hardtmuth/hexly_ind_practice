@@ -1,10 +1,9 @@
-
-import { WebcamCapture } from './components/WebcamCapture'
+import { ScannerScreen } from "./components/ScannerScreen"
 
 const App = () => {
   return (
     <>
-      <WebcamCapture />
+      <ScannerScreen />
     </>
   )
 }
