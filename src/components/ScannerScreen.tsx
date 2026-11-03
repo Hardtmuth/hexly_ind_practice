@@ -10,9 +10,8 @@ import {
   ScannerFrame,
   Button,
   IconButton,
-  SegmentedControl,
+  // SegmentedControl,
   EmptyState,
-  ThumbnailStrip,
 } from "@pechat-tut/ui"
 import "@pechat-tut/ui/styles.css"
 import { useTranslation } from "../i18n/useTranslation"
@@ -32,7 +31,7 @@ interface ScannedPage {
   type: "scan" | "photo"
 }
 
-type ScanFilter = "color" | "grayscale" | "text"
+// type ScanFilter = "color" | "grayscale" | "text"
 
 export const ScannerScreen = () => {
   const { t } = useTranslation()
@@ -46,11 +45,9 @@ export const ScannerScreen = () => {
   const [isOpenCvReady, setIsOpenCvReady] = useState<boolean>(false)
   const [hasDocumentInFrame, setHasDocumentInFrame] = useState<boolean>(false)
   const lastPointsRef = useRef<number[] | null>(null)
-  const [filter, setFilter] = useState<ScanFilter>("color")
-  const [selectedPageId, setSelectedPageId] = useState<string>("")
-
-  const lastPageId = pages.length > 0 ? pages[pages.length - 1].id : ""
-  const activePageId = selectedPageId || lastPageId
+  // const [filter, setFilter] = useState<ScanFilter>("color")
+  // Реальные пропорции видеопотока (ширина / высота), чтобы рамка не искажала кадр
+  const [frameAspect, setFrameAspect] = useState<number>(4 / 3)
 
   const overlay: CSSProperties = {
     position: "absolute",
@@ -69,7 +66,7 @@ export const ScannerScreen = () => {
     width: "100%",
     height: "100%",
     transform: "scaleX(-1)",
-    objectFit: "fill",
+    objectFit: "contain",
   }
 
   const overlayStyle: CSSProperties = { ...overlay, width: "100%", height: "100%" }
@@ -110,12 +107,17 @@ export const ScannerScreen = () => {
         if (videoRef.current) {
           videoRef.current.srcObject = stream
           videoRef.current.onloadedmetadata = () => {
-            if (isOpenCvReady && videoRef.current) {
+            if (videoRef.current) {
               const width = videoRef.current.videoWidth
               const height = videoRef.current.videoHeight
+              if (width && height) {
+                setFrameAspect(width / height)
+              }
               videoRef.current.width = width
               videoRef.current.height = height
-              initOpenCVProcessing()
+              if (isOpenCvReady) {
+                initOpenCVProcessing()
+              }
             }
           }
         }
@@ -288,17 +290,17 @@ export const ScannerScreen = () => {
   }, [t, isOpenCvReady])
 
   // Применение фильтра к оверлею камеры
-  useEffect(() => {
+  /* useEffect(() => {
     const canvas = overlayCanvasRef.current
     if (!canvas) return
-    canvas.style.filter =
-      filter === "grayscale"
+    canvas.style.filter = "none" 
+      /* filter === "grayscale"
         ? "grayscale(1)"
         : filter === "text"
           ? "grayscale(1) contrast(2)"
           : "none"
   }, [filter])
-
+ */
   const takeNormalPhoto = () => {
     const video = videoRef.current
     const canvas = canvasRef.current
@@ -530,23 +532,21 @@ export const ScannerScreen = () => {
 
   return (
     <Theme>
-      <Screen>
+      <Screen
+        style={
+          {
+            "--scanner-frame-ratio": frameAspect,
+          } as CSSProperties
+        }
+      >
         <Header
           logoSrc="/logo.svg"
           logoAlt="ПЕЧАТЬ.ТУТ"
-          onBack={() => console.log("back requested")}
-          right={
-            <IconButton
-              icon="refresh"
-              label={t("scannerScreen.refresh")}
-              onClick={() => console.log("retry camera requested")}
-            />
-          }
         />
         <Title subtitle={t("scannerScreen.subtitle")}>
           {t("scannerScreen.title")}
         </Title>
-        <ScannerFrame label={t("scannerScreen.frameLabel")}>
+        <ScannerFrame className="scanner-frame" label={t("scannerScreen.frameLabel")}>
           {isOpenCvReady ? (
             <>
               <video
@@ -562,6 +562,17 @@ export const ScannerScreen = () => {
                 className="scanner-overlay-canvas"
                 style={overlayStyle}
               />
+              <div className="scanner-a4-guide" aria-hidden="true">
+                <span className="scanner-a4-corner scanner-a4-corner--tl" />
+                <span className="scanner-a4-corner scanner-a4-corner--tr" />
+                <span className="scanner-a4-corner scanner-a4-corner--bl" />
+                <span className="scanner-a4-corner scanner-a4-corner--br" />
+              </div>
+              {/* {!error && (
+                <p className="pui-frame-label scanner-hint" role="status">
+                  {t("scannerScreen.statusReady")}
+                </p>
+              )} */}
             </>
           ) : (
             <EmptyState
@@ -571,10 +582,8 @@ export const ScannerScreen = () => {
             />
           )}
         </ScannerFrame>
-        <Status tone={error ? "error" : "info"}>
-          {error ?? t("scannerScreen.statusReady")}
-        </Status>
-        <SegmentedControl
+        {error && <Status tone="error">{error}</Status>}
+        {/* <SegmentedControl
           label={t("scannerScreen.filterLabel")}
           value={filter}
           onChange={(value) => setFilter(value as ScanFilter)}
@@ -583,15 +592,78 @@ export const ScannerScreen = () => {
             { value: "grayscale", label: t("scannerScreen.filterGrayscale") },
             { value: "text", label: t("scannerScreen.filterText") },
           ]}
-        />
+        /> */}
+        <section className="pui-footer">
+          <Button
+            variant="secondary"
+            icon="camera"
+            onClick={takeNormalPhoto}
+            disabled={!isOpenCvReady}
+          >
+            {t("scannerScreen.captureDocument")}
+          </Button>
+          <Button
+            variant="primary"
+            icon="crop"
+            onClick={takeCroppedPhoto}
+            disabled={!isOpenCvReady || !hasDocumentInFrame}
+          >
+            {t("scannerScreen.scanDocument")}
+          </Button>
+          
+        </section>
         {pages.length > 0 && (
-          <ThumbnailStrip
-            pages={pages}
-            selectedId={activePageId}
-            onSelect={setSelectedPageId}
-          />
+          <div className="scanner-pages-panel">
+            <section
+              className="scanner-pages"
+              aria-label={t("scannerScreen.capturedTitle")}
+            >
+              {pages.map((page, index) => (
+                <article key={page.id} className="scanner-page">
+                  <div className="scanner-page-preview">
+                    <img
+                      src={page.src}
+                      alt={`${t("scannerScreen.page")} ${index + 1}`}
+                      className="scanner-page-image"
+                      style={{ transform: `rotate(${page.rotation}deg)` }}
+                    />
+                    <span className="scanner-page-number" aria-hidden="true">
+                      {index + 1}
+                    </span>
+                  </div>
+                  <div className="scanner-page-actions">
+                    <IconButton
+                      className="scanner-page-action"
+                      icon="rotate"
+                      label={t("scannerScreen.rotate")}
+                      onClick={() => rotatePage(page.id)}
+                    />
+                    <IconButton
+                      className="scanner-page-action"
+                      icon="trash"
+                      label={t("scannerScreen.delete")}
+                      onClick={() => deletePage(page.id)}
+                    />
+                  </div>
+                </article>
+              ))}
+            </section>
+            <div className="scanner-pages-actions">
+              <Button
+                variant="secondary"
+                size="small"
+                icon="file"
+                onClick={downloadAll}
+              >
+                {t("scannerScreen.download")}
+              </Button>
+              <Button variant="primary" size="small" onClick={printPages}>
+                {t("scannerScreen.print")}
+              </Button>
+            </div>
+          </div>
         )}
-        {pages.length > 0 && (
+        {/* {pages.length > 0 && (
           <section className="pui-card">
             <h2 className="pui-card-title">{t("scannerScreen.capturedTitle")}</h2>
             {pages.map((page, index) => (
@@ -624,25 +696,8 @@ export const ScannerScreen = () => {
               </Button>
             </div>
           </section>
-        )}
-        <footer className="pui-footer">
-          <Button
-            variant="secondary"
-            icon="crop"
-            onClick={takeCroppedPhoto}
-            disabled={!isOpenCvReady || !hasDocumentInFrame}
-          >
-            {t("scannerScreen.scanDocument")}
-          </Button>
-          <Button
-            variant="primary"
-            icon="camera"
-            onClick={takeNormalPhoto}
-            disabled={!isOpenCvReady}
-          >
-            {t("scannerScreen.captureDocument")}
-          </Button>
-        </footer>
+        )} */}
+        
         <canvas ref={canvasRef} className="hidden-canvas" />
       </Screen>
     </Theme>

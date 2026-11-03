@@ -232,3 +232,194 @@ button:disabled {
   gap: 16px;
   align-items: center;
 }
+
+/* Область камеры: реальные пропорции потока + ограничение высоты.
+   --scanner-frame-ratio задаётся из ScannerScreen по videoWidth / videoHeight. */
+.pui-frame.scanner-frame {
+  --scanner-frame-max-height: 46vh;
+  flex: 0 1 auto;
+  width: min(
+    100%,
+    calc(var(--scanner-frame-max-height) * var(--scanner-frame-ratio, 1.3333))
+  );
+  aspect-ratio: var(--scanner-frame-ratio, 1.3333);
+  min-height: 0;
+  margin-inline: auto;
+}
+
+@media (max-height: 700px) {
+  .pui-frame.scanner-frame {
+    --scanner-frame-max-height: 42vh;
+  }
+}
+
+/* Подсказка-рамка формата A4 (210 × 297) */
+.scanner-a4-guide {
+  --a4-ratio: 0.7071;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: min(
+    86%,
+    calc(84% * var(--a4-ratio) / var(--scanner-frame-ratio, 1.3333))
+  );
+  aspect-ratio: 210 / 297;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.scanner-a4-corner {
+  position: absolute;
+  width: 30px;
+  height: 30px;
+  border: 3px solid rgba(255, 255, 255, 0.92);
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.55));
+}
+
+.scanner-a4-corner--tl {
+  top: 0;
+  left: 0;
+  border-right: 0;
+  border-bottom: 0;
+  border-top-left-radius: 10px;
+}
+
+.scanner-a4-corner--tr {
+  top: 0;
+  right: 0;
+  border-left: 0;
+  border-bottom: 0;
+  border-top-right-radius: 10px;
+}
+
+.scanner-a4-corner--bl {
+  bottom: 0;
+  left: 0;
+  border-top: 0;
+  border-right: 0;
+  border-bottom-left-radius: 10px;
+}
+
+.scanner-a4-corner--br {
+  right: 0;
+  bottom: 0;
+  border-top: 0;
+  border-left: 0;
+  border-bottom-right-radius: 10px;
+}
+
+@media (max-width: 600px) {
+  .scanner-a4-corner {
+    width: 22px;
+    height: 22px;
+    border-width: 2px;
+  }
+}
+
+/* Подсказка поверх кадра */
+.pui-frame-label.scanner-hint {
+  top: 12px;
+  bottom: auto;
+  left: 50%;
+  z-index: 3;
+  max-width: calc(100% - 32px);
+  margin: 0;
+  text-align: center;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+@media (max-width: 600px) {
+  .pui-frame-label.scanner-hint {
+    top: 8px;
+  }
+}
+
+/* Предпросмотр отсканированных страниц */
+.scanner-pages-panel {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 12px;
+  align-items: stretch;
+}
+
+.scanner-pages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 6px 3px 0;
+}
+
+.scanner-page {
+  flex: 0 0 auto;
+  width: clamp(150px, 16vw, 190px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--pui-line);
+  border-radius: 16px;
+  background: var(--pui-paper);
+}
+
+.scanner-page-preview {
+  position: relative;
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1;
+  overflow: hidden;
+  border-radius: 12px;
+  background: var(--pui-soft);
+}
+
+.scanner-page-image {
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  transition: transform 0.2s ease;
+}
+
+.scanner-page-number {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  display: inline-grid;
+  place-items: center;
+  min-width: 26px;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(26, 41, 66, 0.75);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.scanner-page-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.scanner-page-actions .pui-icon-button {
+  width: 48px;
+  height: 48px;
+  min-width: 48px;
+}
+
+.scanner-pages-actions {
+  display: flex;
+  flex: none;
+  flex-direction: row;
+  justify-content: center;
+  gap: 12px;
+}
+
+@media (max-width: 600px) {
+  .scanner-pages-actions .pui-button {
+    flex: 1;
+  }
+}
