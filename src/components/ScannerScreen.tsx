@@ -34,6 +34,16 @@ interface ScannedPage {
 // Пропорции листа A4 (210 × 297) — формат рамки камеры
 const A4_RATIO = 210 / 297
 
+// Родной сенсор камеры ландшафтный (2560×1440). Именно его и запрашиваем:
+// после физического поворота корпуса программный поворот на 90° даёт
+// портретный кадр 1440×2560 без обрезки. Если драйвер всё равно отдаёт
+// портретный поток, поворот не применяем — иначе кадр станет ландшафтным.
+// Если текст ляжет на бок в другую сторону, меняем 90 на 270.
+const CAMERA_ROTATION_DEG = 90
+// Поворот для потока, который драйвер уже отдаёт портретным:
+// сохраняем исходный переворот камеры на 180°.
+const PORTRAIT_STREAM_ROTATION_DEG = 180
+
 // type ScanFilter = "color" | "grayscale" | "text"
 
 export const ScannerScreen = () => {
@@ -46,34 +56,46 @@ export const ScannerScreen = () => {
 
   const [canScrollLeft, setCanScrollLeft] = useState<boolean>(false)
   const [canScrollRight, setCanScrollRight] = useState<boolean>(false)
+  const [isCapturing, setIsCapturing] = useState<boolean>(false)
   const [pages, setPages] = useState<ScannedPage[]>([])
   const [error, setError] = useState<string | null>(null)
   const [isOpenCvReady, setIsOpenCvReady] = useState<boolean>(false)
   const [hasDocumentInFrame, setHasDocumentInFrame] = useState<boolean>(false)
+  const [isLandscapeStream, setIsLandscapeStream] = useState<boolean>(true)
   const lastPointsRef = useRef<number[] | null>(null)
   // const [filter, setFilter] = useState<ScanFilter>("color")
 
-  const overlay: CSSProperties = {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    width: "100%",
-    height: "100%",
-    pointerEvents: "none",
-    transform: "rotate(180deg)",
-  }
+  // Итоговый кадр на экране всегда портретный: ландшафтный поток поворачиваем
+  // на 90°, портретный оставляем как есть (только исходный переворот 180°).
+  const rotationDeg = isLandscapeStream
+    ? CAMERA_ROTATION_DEG
+    : PORTRAIT_STREAM_ROTATION_DEG
+  const rotationRad = (rotationDeg * Math.PI) / 180
+  const isQuarterTurn = isLandscapeStream && rotationDeg % 180 !== 0
 
-  const videoStyle: CSSProperties = {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    width: "100%",
-    height: "100%",
-    transform: "rotate(180deg)",
-    objectFit: "cover",
-  }
-
-  const overlayStyle: CSSProperties = { ...overlay, width: "100%", height: "100%" }
+  const mediaStyle: CSSProperties = isQuarterTurn
+    ? {
+        position: "absolute",
+        top: "50%",
+        left: "50%",
+        width: `${100 / A4_RATIO}%`,
+        height: `${A4_RATIO * 100}%`,
+        transform: `translate(-50%, -50%) rotate(${rotationDeg}deg)`,
+        // cover отрезает пустые поля сенсора по краям листа: при 9:16
+        // и A4 это ровно те полосы, которые оставались при contain.
+        objectFit: "cover",
+        pointerEvents: "none",
+      }
+    : {
+        position: "absolute",
+        top: 0,
+        left: 0,
+        width: "100%",
+        height: "100%",
+        transform: `rotate(${rotationDeg}deg)`,
+        objectFit: "cover",
+        pointerEvents: "none",
+      }
 
   // Проверка готовности OpenCV.js
   useEffect(() => {
@@ -92,22 +114,38 @@ export const ScannerScreen = () => {
   useEffect(() => {
     let stream: MediaStream | null = null
     let animationFrameId: number
+    let stopped = false
     let cap: any = null
     let src: any = null
+    let smallSrc: any = null
     let dst: any = null
     let contours: any = null
     let hierarchy: any = null
 
     const startCamera = async () => {
       try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            width: { ideal: 640 },
-            height: { ideal: 480 },
-            facingMode: "environment",
-          },
-          audio: false,
-        })
+        // Запрашиваем родной ландшафтный режим сенсора 2560×1440
+        // Портретный кадр получаем программным поворотом на 90°
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+              width: { exact: 2560 },
+              height: { exact: 1440 },
+              facingMode: "environment",
+            },
+            audio: false,
+          })
+        } catch (e) {
+          if ((e as { name?: string })?.name !== "OverconstrainedError") throw e
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+              width: { ideal: 2560 },
+              height: { ideal: 1440 },
+              facingMode: "environment",
+            },
+            audio: false,
+          })
+        }
         if (videoRef.current) {
           videoRef.current.srcObject = stream
           videoRef.current.onloadedmetadata = () => {
@@ -116,6 +154,9 @@ export const ScannerScreen = () => {
               const height = videoRef.current.videoHeight
               videoRef.current.width = width
               videoRef.current.height = height
+              // Фактический режим
+              console.info(`[scanner] stream ${width}x${height}`)
+              setIsLandscapeStream(width > height)
               if (isOpenCvReady) {
                 initOpenCVProcessing()
               }
@@ -135,36 +176,40 @@ export const ScannerScreen = () => {
 
       const cv = window.cv
 
-      overlayCanvas.width = video.width
-      overlayCanvas.height = video.height
+      // Контур ищем на уменьшенной копии кадра: на полном кадре высокого
+      // разрешения OpenCV обрабатывает каждый кадр слишком медленно.
+      // Точки рамки затем масштабируются обратно в координаты потока.
+      const DETECT_MAX = 640
+      const detectScale = Math.min(1, DETECT_MAX / Math.max(video.width, video.height))
+      const detectW = Math.max(1, Math.round(video.width * detectScale))
+      const detectH = Math.max(1, Math.round(video.height * detectScale))
+      const pointScaleX = video.width / detectW
+      const pointScaleY = video.height / detectH
+
+      overlayCanvas.width = detectW
+      overlayCanvas.height = detectH
 
       cap = new cv.VideoCapture(video)
       src = new cv.Mat(video.height, video.width, cv.CV_8UC4)
-      dst = new cv.Mat(video.height, video.width, cv.CV_8UC1)
+      smallSrc = new cv.Mat(detectH, detectW, cv.CV_8UC4)
+      dst = new cv.Mat(detectH, detectW, cv.CV_8UC1)
       contours = new cv.MatVector()
       hierarchy = new cv.Mat()
 
       const processVideo = () => {
         try {
-          console.log(
-            "[pui] processVideo: readyState=" +
-              videoRef.current?.readyState +
-              " paused=" +
-              videoRef.current?.paused +
-              " video=" +
-              videoRef.current?.videoWidth +
-              "x" +
-              videoRef.current?.videoHeight,
-          )
           if (
             !videoRef.current ||
             videoRef.current.paused ||
             videoRef.current.ended
-          )
+          ) {
+            // Видео может временно встать на паузу — цикл продолжится в finally.
             return
+          }
 
           cap.read(src)
-          cv.cvtColor(src, dst, cv.COLOR_RGBA2GRAY)
+          cv.resize(src, smallSrc, new cv.Size(detectW, detectH), 0, 0, cv.INTER_AREA)
+          cv.cvtColor(smallSrc, dst, cv.COLOR_RGBA2GRAY)
 
           const ksize = new cv.Size(5, 5)
           cv.GaussianBlur(dst, dst, ksize, 0, 0, cv.BORDER_DEFAULT)
@@ -194,7 +239,7 @@ export const ScannerScreen = () => {
           let maxArea = 0
 
           let pageContour: any = null
-          const frameArea = video.width * video.height
+          const frameArea = detectW * detectH
 
           for (let i = 0; i < contours.size(); ++i) {
             const contour = contours.get(i)
@@ -217,33 +262,23 @@ export const ScannerScreen = () => {
             contour.delete()
           }
 
-          console.log("[pui] frame analysis: contours=" + contours.size() + " maxArea=" + maxArea)
-
           const ctx = overlayCanvas.getContext("2d", {
             willReadFrequently: true,
           })
           if (ctx) {
-            if (overlayCanvas.width > 0 && overlayCanvas.height > 0) {
-              const frameData = ctx.getImageData(0, 0, overlayCanvas.width, overlayCanvas.height)
-              let sum = 0
-              let sumSq = 0
-              let count = 0
-              for (let i = 0; i < frameData.data.length; i += 4) {
-                const v = (frameData.data[i] + frameData.data[i + 1] + frameData.data[i + 2]) / 3
-                sum += v
-                sumSq += v * v
-                count++
-              }
-              const mean = count > 0 ? sum / count : 0
-              const std = count > 0 ? Math.sqrt(Math.max(0, sumSq / count - mean * mean)) : 0
-              console.log("[pui] frame stats: mean=" + mean.toFixed(2) + " std=" + std.toFixed(2))
-            }
             ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height)
 
-            console.log("[pui] hasDocumentInFrame:", !!pageContour)
             if (pageContour) {
               setHasDocumentInFrame(true)
-              lastPointsRef.current = Array.from(pageContour.data32S)
+              // Координаты контура найдены на уменьшенном кадре - возврат в масштаб исходного потока для обрезки.
+              const points: number[] = Array.from(
+                pageContour.data32S as ArrayLike<number>,
+              )
+              for (let i = 0; i < points.length; i += 2) {
+                points[i] = Math.round(points[i] * pointScaleX)
+                points[i + 1] = Math.round(points[i + 1] * pointScaleY)
+              }
+              lastPointsRef.current = points
 
               ctx.strokeStyle = "#00FF00"
               ctx.lineWidth = 4
@@ -256,7 +291,6 @@ export const ScannerScreen = () => {
               ctx.lineTo(d[6], d[7])
               ctx.closePath()
               ctx.stroke()
-              console.log("[pui] document contour points:", Array.from(pageContour.data32S))
 
               pageContour.delete()
             } else {
@@ -264,9 +298,13 @@ export const ScannerScreen = () => {
             }
           }
 
-          animationFrameId = requestAnimationFrame(processVideo)
         } catch (e) {
           console.error(t("errors.opencvFrameProcessing"), e)
+        } finally {
+          // Планируем следующий кадр даже после ошибки: один сбой OpenCV не должен останавливать детекцию документа.
+          if (!stopped) {
+            animationFrameId = requestAnimationFrame(processVideo)
+          }
         }
       }
 
@@ -278,15 +316,16 @@ export const ScannerScreen = () => {
     }
 
     return () => {
+      stopped = true
       cancelAnimationFrame(animationFrameId)
       if (stream) {
         stream.getTracks().forEach((track) => track.stop())
       }
       if (src) src.delete()
+      if (smallSrc) smallSrc.delete()
       if (dst) dst.delete()
       if (contours) contours.delete()
       if (hierarchy) hierarchy.delete()
-      if (cap) cap.delete()
     }
   }, [t, isOpenCvReady])
 
@@ -309,12 +348,18 @@ export const ScannerScreen = () => {
     if (video && canvas) {
       const ctx = canvas.getContext("2d", { willReadFrequently: true })
       if (ctx) {
-        canvas.width = video.videoWidth
-        canvas.height = video.videoHeight
+        canvas.width = isQuarterTurn ? video.videoHeight : video.videoWidth
+        canvas.height = isQuarterTurn ? video.videoWidth : video.videoHeight
 
         ctx.translate(canvas.width / 2, canvas.height / 2)
-        ctx.rotate(Math.PI)
-        ctx.drawImage(video, -canvas.width / 2, -canvas.height / 2, canvas.width, canvas.height)
+        ctx.rotate(rotationRad)
+        ctx.drawImage(
+          video,
+          -video.videoWidth / 2,
+          -video.videoHeight / 2,
+          video.videoWidth,
+          video.videoHeight,
+        )
         ctx.setTransform(1, 0, 0, 1, 0, 0)
 
         const newPage: ScannedPage = {
@@ -328,13 +373,15 @@ export const ScannerScreen = () => {
     }
   }
 
-  const takeCroppedPhoto = () => {
+  const takeCroppedPhoto = async () => {
+    if (isCapturing) return
     const video = videoRef.current
     const canvas = canvasRef.current
     const cv = window.cv
 
     if (!video || !canvas || !cv || !lastPointsRef.current) return
 
+    setIsCapturing(true)
     try {
       const pts = lastPointsRef.current
       const origPoints = [
@@ -355,24 +402,16 @@ export const ScannerScreen = () => {
 
       const widthA = Math.hypot(br.x - bl.x, br.y - bl.y)
       const widthB = Math.hypot(tr.x - tl.x, tr.y - tl.y)
-      const maxWidth = Math.max(widthA, widthB)
+      const maxWidth = Math.round(Math.max(widthA, widthB))
 
       const heightA = Math.hypot(tr.x - br.x, tr.y - br.y)
-      const heightB = Math.hypot(tl.x - br.x, tl.y - br.y)
-      const maxHeight = Math.max(heightA, heightB)
+      const heightB = Math.hypot(tl.x - bl.x, tl.y - bl.y)
+      const maxHeight = Math.round(Math.max(heightA, heightB))
 
-      canvas.width = maxWidth
-      canvas.height = maxHeight
-
-      const imageSrc = new cv.Mat(
-        video.videoHeight,
-        video.videoWidth,
-        cv.CV_8UC4,
-      )
-      const imageDst = new cv.Mat(maxHeight, maxWidth, cv.CV_8UC4)
-
-      const tempCap = new cv.VideoCapture(video)
-      tempCap.read(imageSrc)
+      // Выпрямленное изображение имеет размеры maxWidth × maxHeight,
+      // а итоговый холст при повороте на 90° меняет их местами.
+      canvas.width = isQuarterTurn ? maxHeight : maxWidth
+      canvas.height = isQuarterTurn ? maxWidth : maxHeight
 
       const srcCoords = cv.matFromArray(4, 1, cv.CV_32FC2, [
         tl.x,
@@ -398,31 +437,87 @@ export const ScannerScreen = () => {
       const dsize = new cv.Size(maxWidth, maxHeight)
       const M = cv.getPerspectiveTransform(srcCoords, dstCoords)
 
-      cv.warpPerspective(
-        imageSrc,
-        imageDst,
-        M,
-        dsize,
-        cv.INTER_LINEAR,
-        cv.BORDER_CONSTANT,
-        new cv.Scalar(),
-      )
-      cv.imshow(canvas, imageDst)
+      // Берём несколько кадров подряд и оставляем самый резкий:
+      // мера резкости — дисперсия лапласиана по всему изображению.
+      const FRAME_COUNT = 5
+      const FRAME_INTERVAL_MS = 90
+      let bestFrame: any = null
+      let bestScore = -1
+
+      const frameCap = new cv.VideoCapture(video)
+
+      for (let i = 0; i < FRAME_COUNT; i++) {
+        const frame = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4)
+        frameCap.read(frame)
+
+        const warped = new cv.Mat(maxHeight, maxWidth, cv.CV_8UC4)
+        cv.warpPerspective(
+          frame,
+          warped,
+          M,
+          dsize,
+          cv.INTER_CUBIC,
+          cv.BORDER_CONSTANT,
+          new cv.Scalar(),
+        )
+        frame.delete()
+
+        const gray = new cv.Mat()
+        cv.cvtColor(warped, gray, cv.COLOR_RGBA2GRAY)
+        const laplacian = new cv.Mat()
+        cv.Laplacian(gray, laplacian, cv.CV_64F)
+        const mean = new cv.Mat()
+        const stddev = new cv.Mat()
+        cv.meanStdDev(laplacian, mean, stddev)
+        const score = stddev.data64F[0] ** 2
+        gray.delete()
+        laplacian.delete()
+        mean.delete()
+        stddev.delete()
+
+        if (score > bestScore) {
+          if (bestFrame) bestFrame.delete()
+          bestFrame = warped
+          bestScore = score
+        } else {
+          warped.delete()
+        }
+
+        if (i < FRAME_COUNT - 1) {
+          await new Promise<void>((resolve) => {
+            setTimeout(resolve, FRAME_INTERVAL_MS)
+          })
+        }
+      }
+
+      srcCoords.delete()
+      dstCoords.delete()
+      M.delete()
+
+      if (!bestFrame) return
+
+      // Лёгкая резкость (unsharp mask) поверх выбранного кадра.
+      const blurred = new cv.Mat()
+      const sharpened = new cv.Mat()
+      cv.GaussianBlur(bestFrame, blurred, new cv.Size(0, 0), 1.2)
+      cv.addWeighted(bestFrame, 1.6, blurred, -0.6, 0, sharpened)
+      blurred.delete()
+      bestFrame.delete()
+
+      // imshow выводит Mat в нативном размере, поэтому сначала рисуем
+      // выпрямленный кадр в отдельный холст, а затем поворачиваем его.
+      const rectified = document.createElement("canvas")
+      rectified.width = maxWidth
+      rectified.height = maxHeight
+      cv.imshow(rectified, sharpened)
+      sharpened.delete()
 
       const ctx = canvas.getContext("2d", { willReadFrequently: true })
       if (ctx) {
-        const tempCanvas = document.createElement("canvas")
-        tempCanvas.width = canvas.width
-        tempCanvas.height = canvas.height
-        const tempCtx = tempCanvas.getContext("2d")
-        if (tempCtx) {
-          tempCtx.drawImage(canvas, 0, 0)
-          ctx.clearRect(0, 0, canvas.width, canvas.height)
-          ctx.translate(canvas.width / 2, canvas.height / 2)
-          ctx.rotate(Math.PI)
-          ctx.drawImage(tempCanvas, -canvas.width / 2, -canvas.height / 2)
-          ctx.setTransform(1, 0, 0, 1, 0, 0)
-        }
+        ctx.translate(canvas.width / 2, canvas.height / 2)
+        ctx.rotate(rotationRad)
+        ctx.drawImage(rectified, -maxWidth / 2, -maxHeight / 2, maxWidth, maxHeight)
+        ctx.setTransform(1, 0, 0, 1, 0, 0)
       }
 
       const newPage: ScannedPage = {
@@ -432,14 +527,10 @@ export const ScannerScreen = () => {
         type: "scan",
       }
       setPages((prev) => [...prev, newPage])
-
-      imageSrc.delete()
-      imageDst.delete()
-      srcCoords.delete()
-      dstCoords.delete()
-      M.delete()
     } catch (e) {
       console.error(t("errors.opencvPerspectiveCorrection"), e)
+    } finally {
+      setIsCapturing(false)
     }
   }
 
@@ -585,12 +676,12 @@ export const ScannerScreen = () => {
                   playsInline
                   muted
                   className="scanner-video"
-                  style={videoStyle}
+                  style={mediaStyle}
                 />
                 <canvas
                   ref={overlayCanvasRef}
                   className="scanner-overlay-canvas"
-                  style={overlayStyle}
+                  style={mediaStyle}
                 />
                 <div className="scanner-a4-guide" aria-hidden="true">
                   <span className="scanner-a4-corner scanner-a4-corner--tl" />
@@ -637,7 +728,7 @@ export const ScannerScreen = () => {
             variant="primary"
             icon="crop"
             onClick={takeCroppedPhoto}
-            disabled={!isOpenCvReady || !hasDocumentInFrame}
+            disabled={!isOpenCvReady || !hasDocumentInFrame || isCapturing}
           >
             {t("scannerScreen.scanDocument")}
           </Button>
