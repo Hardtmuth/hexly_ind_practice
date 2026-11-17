@@ -31,6 +31,9 @@ interface ScannedPage {
   type: "scan" | "photo"
 }
 
+// Пропорции листа A4 (210 × 297) — формат рамки камеры
+const A4_RATIO = 210 / 297
+
 // type ScanFilter = "color" | "grayscale" | "text"
 
 export const ScannerScreen = () => {
@@ -39,15 +42,16 @@ export const ScannerScreen = () => {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null)
+  const pagesScrollRef = useRef<HTMLElement | null>(null)
 
+  const [canScrollLeft, setCanScrollLeft] = useState<boolean>(false)
+  const [canScrollRight, setCanScrollRight] = useState<boolean>(false)
   const [pages, setPages] = useState<ScannedPage[]>([])
   const [error, setError] = useState<string | null>(null)
   const [isOpenCvReady, setIsOpenCvReady] = useState<boolean>(false)
   const [hasDocumentInFrame, setHasDocumentInFrame] = useState<boolean>(false)
   const lastPointsRef = useRef<number[] | null>(null)
   // const [filter, setFilter] = useState<ScanFilter>("color")
-  // Реальные пропорции видеопотока (ширина / высота), чтобы рамка не искажала кадр
-  const [frameAspect, setFrameAspect] = useState<number>(4 / 3)
 
   const overlay: CSSProperties = {
     position: "absolute",
@@ -56,7 +60,7 @@ export const ScannerScreen = () => {
     width: "100%",
     height: "100%",
     pointerEvents: "none",
-    transform: "scaleX(-1)",
+    transform: "rotate(180deg)",
   }
 
   const videoStyle: CSSProperties = {
@@ -65,8 +69,8 @@ export const ScannerScreen = () => {
     left: 0,
     width: "100%",
     height: "100%",
-    transform: "scaleX(-1)",
-    objectFit: "contain",
+    transform: "rotate(180deg)",
+    objectFit: "cover",
   }
 
   const overlayStyle: CSSProperties = { ...overlay, width: "100%", height: "100%" }
@@ -110,9 +114,6 @@ export const ScannerScreen = () => {
             if (videoRef.current) {
               const width = videoRef.current.videoWidth
               const height = videoRef.current.videoHeight
-              if (width && height) {
-                setFrameAspect(width / height)
-              }
               videoRef.current.width = width
               videoRef.current.height = height
               if (isOpenCvReady) {
@@ -311,9 +312,9 @@ export const ScannerScreen = () => {
         canvas.width = video.videoWidth
         canvas.height = video.videoHeight
 
-        ctx.translate(canvas.width, 0)
-        ctx.scale(-1, 1)
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+        ctx.translate(canvas.width / 2, canvas.height / 2)
+        ctx.rotate(Math.PI)
+        ctx.drawImage(video, -canvas.width / 2, -canvas.height / 2, canvas.width, canvas.height)
         ctx.setTransform(1, 0, 0, 1, 0, 0)
 
         const newPage: ScannedPage = {
@@ -417,9 +418,9 @@ export const ScannerScreen = () => {
         if (tempCtx) {
           tempCtx.drawImage(canvas, 0, 0)
           ctx.clearRect(0, 0, canvas.width, canvas.height)
-          ctx.translate(canvas.width, 0)
-          ctx.scale(-1, 1)
-          ctx.drawImage(tempCanvas, 0, 0)
+          ctx.translate(canvas.width / 2, canvas.height / 2)
+          ctx.rotate(Math.PI)
+          ctx.drawImage(tempCanvas, -canvas.width / 2, -canvas.height / 2)
           ctx.setTransform(1, 0, 0, 1, 0, 0)
         }
       }
@@ -451,6 +452,33 @@ export const ScannerScreen = () => {
   const deletePage = (id: string) => {
     setPages((prev) => prev.filter((p) => p.id !== id))
   }
+
+  // Состояние стрелок прокрутки ряда отсканированных страниц
+  const updateScrollButtons = () => {
+    const el = pagesScrollRef.current
+    if (!el) {
+      setCanScrollLeft(false)
+      setCanScrollRight(false)
+      return
+    }
+    setCanScrollLeft(el.scrollLeft > 1)
+    setCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 1)
+  }
+
+  const scrollPages = (direction: -1 | 1) => {
+    const el = pagesScrollRef.current
+    if (!el) return
+    el.scrollBy({ left: direction * el.clientWidth * 0.8, behavior: "smooth" })
+  }
+
+  useEffect(() => {
+    updateScrollButtons()
+    const el = pagesScrollRef.current
+    if (!el) return
+    const observer = new ResizeObserver(updateScrollButtons)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [pages.length])
 
   const getRenderedPageCanvas = (page: ScannedPage): Promise<HTMLCanvasElement> => {
     return new Promise((resolve) => {
@@ -533,9 +561,10 @@ export const ScannerScreen = () => {
   return (
     <Theme>
       <Screen
+        className="scanner-screen"
         style={
           {
-            "--scanner-frame-ratio": frameAspect,
+            "--scanner-frame-ratio": A4_RATIO,
           } as CSSProperties
         }
       >
@@ -546,42 +575,44 @@ export const ScannerScreen = () => {
         <Title subtitle={t("scannerScreen.subtitle")}>
           {t("scannerScreen.title")}
         </Title>
-        <ScannerFrame className="scanner-frame" label={t("scannerScreen.frameLabel")}>
-          {isOpenCvReady ? (
-            <>
-              <video
-                ref={videoRef}
-                autoPlay
-                playsInline
-                muted
-                className="scanner-video"
-                style={videoStyle}
+        <div className="scanner-camera-area">
+          <ScannerFrame className="scanner-frame" label={t("scannerScreen.frameLabel")}>
+            {isOpenCvReady ? (
+              <>
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="scanner-video"
+                  style={videoStyle}
+                />
+                <canvas
+                  ref={overlayCanvasRef}
+                  className="scanner-overlay-canvas"
+                  style={overlayStyle}
+                />
+                <div className="scanner-a4-guide" aria-hidden="true">
+                  <span className="scanner-a4-corner scanner-a4-corner--tl" />
+                  <span className="scanner-a4-corner scanner-a4-corner--tr" />
+                  <span className="scanner-a4-corner scanner-a4-corner--bl" />
+                  <span className="scanner-a4-corner scanner-a4-corner--br" />
+                </div>
+                {/* {!error && (
+                  <p className="pui-frame-label scanner-hint" role="status">
+                    {t("scannerScreen.statusReady")}
+                  </p>
+                )} */}
+              </>
+            ) : (
+              <EmptyState
+                title={t("scannerScreen.cameraNotReadyTitle")}
+                description={t("scannerScreen.cameraNotReadyDescription")}
+                icon="camera"
               />
-              <canvas
-                ref={overlayCanvasRef}
-                className="scanner-overlay-canvas"
-                style={overlayStyle}
-              />
-              <div className="scanner-a4-guide" aria-hidden="true">
-                <span className="scanner-a4-corner scanner-a4-corner--tl" />
-                <span className="scanner-a4-corner scanner-a4-corner--tr" />
-                <span className="scanner-a4-corner scanner-a4-corner--bl" />
-                <span className="scanner-a4-corner scanner-a4-corner--br" />
-              </div>
-              {/* {!error && (
-                <p className="pui-frame-label scanner-hint" role="status">
-                  {t("scannerScreen.statusReady")}
-                </p>
-              )} */}
-            </>
-          ) : (
-            <EmptyState
-              title={t("scannerScreen.cameraNotReadyTitle")}
-              description={t("scannerScreen.cameraNotReadyDescription")}
-              icon="camera"
-            />
-          )}
-        </ScannerFrame>
+            )}
+          </ScannerFrame>
+        </div>
         {error && <Status tone="error">{error}</Status>}
         {/* <SegmentedControl
           label={t("scannerScreen.filterLabel")}
@@ -612,57 +643,89 @@ export const ScannerScreen = () => {
           </Button>
           
         </section>
-        {pages.length > 0 && (
-          <div className="scanner-pages-panel">
+        <div className="scanner-pages-panel">
+          <div className="scanner-results-head">
+            <h2>{t("scannerScreen.capturedTitle")}</h2>
+            <span className="scanner-results-count">{pages.length}</span>
+          </div>
+          <div className="scanner-results-strip">
+            <IconButton
+              className={`scanner-scroll-btn scanner-scroll-btn--prev${canScrollLeft ? "" : " scanner-scroll-btn--hidden"}`}
+              icon="arrow"
+              label={t("scannerScreen.scrollLeft")}
+              onClick={() => scrollPages(-1)}
+              disabled={!canScrollLeft}
+            />
             <section
+              ref={pagesScrollRef}
               className="scanner-pages"
+              onScroll={updateScrollButtons}
               aria-label={t("scannerScreen.capturedTitle")}
             >
-              {pages.map((page, index) => (
-                <article key={page.id} className="scanner-page">
-                  <div className="scanner-page-preview">
-                    <img
-                      src={page.src}
-                      alt={`${t("scannerScreen.page")} ${index + 1}`}
-                      className="scanner-page-image"
-                      style={{ transform: `rotate(${page.rotation}deg)` }}
-                    />
-                    <span className="scanner-page-number" aria-hidden="true">
-                      {index + 1}
-                    </span>
-                  </div>
-                  <div className="scanner-page-actions">
-                    <IconButton
-                      className="scanner-page-action"
-                      icon="rotate"
-                      label={t("scannerScreen.rotate")}
-                      onClick={() => rotatePage(page.id)}
-                    />
-                    <IconButton
-                      className="scanner-page-action"
-                      icon="trash"
-                      label={t("scannerScreen.delete")}
-                      onClick={() => deletePage(page.id)}
-                    />
-                  </div>
-                </article>
-              ))}
+              {pages.length === 0 ? (
+                <p className="scanner-results-empty">
+                  {t("scannerScreen.capturedEmpty")}
+                </p>
+              ) : (
+                pages.map((page, index) => (
+                  <article key={page.id} className="scanner-page">
+                    <div className="scanner-page-preview">
+                      <img
+                        src={page.src}
+                        alt={`${t("scannerScreen.page")} ${index + 1}`}
+                        className="scanner-page-image"
+                        style={{ transform: `rotate(${page.rotation}deg)` }}
+                      />
+                      <span className="scanner-page-number" aria-hidden="true">
+                        {index + 1}
+                      </span>
+                    </div>
+                    <div className="scanner-page-actions">
+                      <IconButton
+                        className="scanner-page-action"
+                        icon="rotate"
+                        label={t("scannerScreen.rotate")}
+                        onClick={() => rotatePage(page.id)}
+                      />
+                      <IconButton
+                        className="scanner-page-action"
+                        icon="trash"
+                        label={t("scannerScreen.delete")}
+                        onClick={() => deletePage(page.id)}
+                      />
+                    </div>
+                  </article>
+                ))
+              )}
             </section>
-            <div className="scanner-pages-actions">
-              <Button
-                variant="secondary"
-                size="small"
-                icon="file"
-                onClick={downloadAll}
-              >
-                {t("scannerScreen.download")}
-              </Button>
-              <Button variant="primary" size="small" onClick={printPages}>
-                {t("scannerScreen.print")}
-              </Button>
-            </div>
+            <IconButton
+              className={`scanner-scroll-btn scanner-scroll-btn--next${canScrollRight ? "" : " scanner-scroll-btn--hidden"}`}
+              icon="arrow"
+              label={t("scannerScreen.scrollRight")}
+              onClick={() => scrollPages(1)}
+              disabled={!canScrollRight}
+            />
           </div>
-        )}
+          <div className="scanner-pages-actions">
+            <Button
+              variant="secondary"
+              size="small"
+              icon="file"
+              onClick={downloadAll}
+              disabled={pages.length === 0}
+            >
+              {t("scannerScreen.download")}
+            </Button>
+            <Button
+              variant="primary"
+              size="small"
+              onClick={printPages}
+              disabled={pages.length === 0}
+            >
+              {t("scannerScreen.print")}
+            </Button>
+          </div>
+        </div>
         {/* {pages.length > 0 && (
           <section className="pui-card">
             <h2 className="pui-card-title">{t("scannerScreen.capturedTitle")}</h2>

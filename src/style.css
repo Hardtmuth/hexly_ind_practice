@@ -1,3 +1,12 @@
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
 .main-container {
   display: flex;
   flex-direction: column;
@@ -233,38 +242,41 @@ button:disabled {
   align-items: center;
 }
 
-/* Область камеры: реальные пропорции потока + ограничение высоты.
-   --scanner-frame-ratio задаётся из ScannerScreen по videoWidth / videoHeight. */
-.pui-frame.scanner-frame {
-  --scanner-frame-max-height: 46vh;
-  flex: 0 1 auto;
-  width: min(
-    100%,
-    calc(var(--scanner-frame-max-height) * var(--scanner-frame-ratio, 1.3333))
-  );
-  aspect-ratio: var(--scanner-frame-ratio, 1.3333);
+/* Область камеры: занимает всё свободное место над панелью результатов.
+   Контейнер нужен, чтобы рамка сохраняла пропорции A4 при любом размере экрана. */
+.scanner-camera-area {
+  flex: 1 1 auto;
   min-height: 0;
-  margin-inline: auto;
+  display: grid;
+  place-items: center;
+  container-type: size;
 }
 
-@media (max-height: 700px) {
-  .pui-frame.scanner-frame {
-    --scanner-frame-max-height: 42vh;
-  }
+.pui-frame.scanner-frame {
+  flex: none;
+  width: min(100cqw, calc(100cqh * var(--scanner-frame-ratio, 0.7071)));
+  height: min(100cqh, calc(100cqw / var(--scanner-frame-ratio, 0.7071)));
+  min-width: 0;
+  min-height: 0;
+  aspect-ratio: var(--scanner-frame-ratio, 0.7071);
+  margin: 0;
 }
 
-/* Подсказка-рамка формата A4 (210 × 297) */
+/* Видео и оверлей обрезаются одинаково, поэтому контур документа
+   совпадает с отображаемым кадром. */
+.pui-frame.scanner-frame video,
+.pui-frame.scanner-frame .scanner-overlay-canvas {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Уголки по краям рамки: сама рамка уже имеет формат A4 */
 .scanner-a4-guide {
-  --a4-ratio: 0.7071;
   position: absolute;
-  top: 50%;
-  left: 50%;
-  width: min(
-    86%,
-    calc(84% * var(--a4-ratio) / var(--scanner-frame-ratio, 1.3333))
-  );
-  aspect-ratio: 210 / 297;
-  transform: translate(-50%, -50%);
+  inset: 0;
+  width: 100%;
+  height: 100%;
   pointer-events: none;
   z-index: 2;
 }
@@ -336,29 +348,111 @@ button:disabled {
   }
 }
 
-/* Предпросмотр отсканированных страниц */
+/* Нижняя панель: место под результаты сканирования зарезервировано всегда,
+   чтобы рамка камеры не меняла размер при добавлении страниц. */
 .scanner-pages-panel {
   display: flex;
-  flex: none;
+  flex: 0 0 350px;
+  min-height: 0;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
   align-items: stretch;
+  padding-top: 12px;
+  border-top: 1px solid var(--pui-line);
+}
+
+.scanner-results-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.scanner-results-head h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.scanner-results-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--pui-blue-soft);
+  color: var(--pui-brand);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.scanner-results-strip {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Крупные тач-кнопки прокрутки в стиле UI-кита */
+.pui-icon-button.scanner-scroll-btn {
+  flex: none;
+  width: 64px;
+  height: 64px;
+  min-width: 64px;
+}
+
+/* Кнопка появляется только при прокрутке в свою сторону.
+   visibility сохраняет место, поэтому ряд миниатюр не меняет ширину. */
+.pui-icon-button.scanner-scroll-btn--hidden {
+  visibility: hidden;
+}
+
+.pui-icon-button.scanner-scroll-btn--prev .pui-icon {
+  transform: rotate(180deg);
+}
+
+@media (min-height: 1300px) and (min-width: 850px) {
+  .pui-icon-button.scanner-scroll-btn {
+    width: 76px;
+    height: 76px;
+    min-width: 76px;
+  }
 }
 
 .scanner-pages {
   display: flex;
-  flex-wrap: wrap;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  align-items: center;
   gap: 12px;
   padding: 6px 3px 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.scanner-pages::-webkit-scrollbar {
+  display: none;
+}
+
+.scanner-results-empty {
+  margin: auto;
+  color: var(--pui-muted);
+  font-size: 15px;
+  text-align: center;
 }
 
 .scanner-page {
   flex: 0 0 auto;
-  width: clamp(150px, 16vw, 190px);
+  width: clamp(100px, 10.5vw, 112px);
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 10px;
+  gap: 8px;
+  padding: 8px;
   border: 1px solid var(--pui-line);
   border-radius: 16px;
   background: var(--pui-paper);
@@ -368,7 +462,7 @@ button:disabled {
   position: relative;
   display: grid;
   place-items: center;
-  aspect-ratio: 1;
+  aspect-ratio: 210 / 297;
   overflow: hidden;
   border-radius: 12px;
   background: var(--pui-soft);
@@ -384,17 +478,17 @@ button:disabled {
 
 .scanner-page-number {
   position: absolute;
-  top: 8px;
-  left: 8px;
+  top: 6px;
+  left: 6px;
   display: inline-grid;
   place-items: center;
-  min-width: 26px;
-  height: 26px;
-  padding: 0 8px;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
   border-radius: 999px;
   background: rgba(26, 41, 66, 0.75);
   color: #fff;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
 }
 
@@ -405,9 +499,9 @@ button:disabled {
 }
 
 .scanner-page-actions .pui-icon-button {
-  width: 48px;
-  height: 48px;
-  min-width: 48px;
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
 }
 
 .scanner-pages-actions {
@@ -418,7 +512,34 @@ button:disabled {
   gap: 12px;
 }
 
+/* Переопределяет крупный размер кнопок из UI-кита для широких экранов */
+.scanner-pages-actions .pui-button {
+  min-height: 48px;
+}
+
+@media (max-height: 900px) {
+  .scanner-pages-panel {
+    flex-basis: 240px;
+  }
+
+  .pui-icon-button.scanner-scroll-btn {
+    width: 52px;
+    height: 52px;
+    min-width: 52px;
+  }
+}
+
 @media (max-width: 600px) {
+  .scanner-pages-panel {
+    flex-basis: 280px;
+  }
+
+  .pui-icon-button.scanner-scroll-btn {
+    width: 48px;
+    height: 48px;
+    min-width: 48px;
+  }
+
   .scanner-pages-actions .pui-button {
     flex: 1;
   }
