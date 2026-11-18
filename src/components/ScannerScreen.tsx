@@ -10,7 +10,7 @@ import {
   ScannerFrame,
   Button,
   IconButton,
-  // SegmentedControl,
+  SegmentedControl,
   EmptyState,
 } from "@pechat-tut/ui"
 import "@pechat-tut/ui/styles.css"
@@ -44,7 +44,7 @@ const CAMERA_ROTATION_DEG = 90
 // сохраняем исходный переворот камеры на 180°.
 const PORTRAIT_STREAM_ROTATION_DEG = 180
 
-// type ScanFilter = "color" | "grayscale" | "text"
+type ScanFilter = "color" | "grayscale" | "text"
 
 export const ScannerScreen = () => {
   const { t } = useTranslation()
@@ -62,8 +62,8 @@ export const ScannerScreen = () => {
   const [isOpenCvReady, setIsOpenCvReady] = useState<boolean>(false)
   const [hasDocumentInFrame, setHasDocumentInFrame] = useState<boolean>(false)
   const [isLandscapeStream, setIsLandscapeStream] = useState<boolean>(true)
+  const [filter, setFilter] = useState<ScanFilter>("color")
   const lastPointsRef = useRef<number[] | null>(null)
-  // const [filter, setFilter] = useState<ScanFilter>("color")
 
   // Итоговый кадр на экране всегда портретный: ландшафтный поток поворачиваем
   // на 90°, портретный оставляем как есть (только исходный переворот 180°).
@@ -146,6 +146,27 @@ export const ScannerScreen = () => {
             audio: false,
           })
         }
+
+        // Непрерывная фокусировка (если поддерживается) может повысить резкость.
+        const [track] = stream.getVideoTracks()
+        const capabilities =
+          track && typeof track.getCapabilities === "function"
+            ? (track.getCapabilities() as MediaTrackCapabilities & { focusMode?: string[] })
+            : undefined
+        if (
+          track &&
+          capabilities?.focusMode?.includes("continuous") &&
+          typeof track.applyConstraints === "function"
+        ) {
+          try {
+            await track.applyConstraints({
+              advanced: [{ focusMode: "continuous" } as unknown as MediaTrackConstraintSet],
+            })
+          } catch {
+            // Не все браузеры/камеры применяют это ограничение.
+          }
+        }
+
         if (videoRef.current) {
           videoRef.current.srcObject = stream
           videoRef.current.onloadedmetadata = () => {
@@ -329,18 +350,47 @@ export const ScannerScreen = () => {
     }
   }, [t, isOpenCvReady])
 
-  // Применение фильтра к оверлею камеры
-  /* useEffect(() => {
-    const canvas = overlayCanvasRef.current
-    if (!canvas) return
-    canvas.style.filter = "none" 
-      /* filter === "grayscale"
-        ? "grayscale(1)"
-        : filter === "text"
-          ? "grayscale(1) contrast(2)"
-          : "none"
-  }, [filter])
- */
+  // Дополнительная обработка результата сканирования (опционально).
+  const enhanceDocument = (mat: any, mode: ScanFilter) => {
+    const cv = window.cv
+    if (!cv || !mat || mode === "color") return mat
+
+    if (mode === "grayscale") {
+      const gray = new cv.Mat()
+      cv.cvtColor(mat, gray, cv.COLOR_RGBA2GRAY)
+      const rgba = new cv.Mat()
+      cv.cvtColor(gray, rgba, cv.COLOR_GRAY2RGBA)
+      gray.delete()
+      mat.delete()
+      return rgba
+    }
+
+    if (mode === "text") {
+      const gray = new cv.Mat()
+      cv.cvtColor(mat, gray, cv.COLOR_RGBA2GRAY)
+      const denoised = new cv.Mat()
+      cv.GaussianBlur(gray, denoised, new cv.Size(3, 3), 0)
+      const binary = new cv.Mat()
+      cv.adaptiveThreshold(
+        denoised,
+        binary,
+        255,
+        cv.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv.THRESH_BINARY,
+        25,
+        11,
+      )
+      const rgba = new cv.Mat()
+      cv.cvtColor(binary, rgba, cv.COLOR_GRAY2RGBA)
+      gray.delete()
+      denoised.delete()
+      binary.delete()
+      mat.delete()
+      return rgba
+    }
+
+    return mat
+  }
   const takeNormalPhoto = () => {
     const video = videoRef.current
     const canvas = canvasRef.current
@@ -504,13 +554,16 @@ export const ScannerScreen = () => {
       blurred.delete()
       bestFrame.delete()
 
+      // Опциональная обработка: "Цветной" сохраняет исходный результат.
+      const output = enhanceDocument(sharpened, filter)
+
       // imshow выводит Mat в нативном размере, поэтому сначала рисуем
       // выпрямленный кадр в отдельный холст, а затем поворачиваем его.
       const rectified = document.createElement("canvas")
       rectified.width = maxWidth
       rectified.height = maxHeight
-      cv.imshow(rectified, sharpened)
-      sharpened.delete()
+      cv.imshow(rectified, output)
+      output.delete()
 
       const ctx = canvas.getContext("2d", { willReadFrequently: true })
       if (ctx) {
@@ -600,11 +653,12 @@ export const ScannerScreen = () => {
       const pdf = new jsPDF("p", "mm", "a4")
       for (let i = 0; i < pages.length; i++) {
         const renderedCanvas = await getRenderedPageCanvas(pages[i])
-        const imgData = renderedCanvas.toDataURL("image/jpeg", 1.0)
+        // PNG сохраняет детали без артефактов сжатия JPEG.
+        const imgData = renderedCanvas.toDataURL("image/png")
         if (i > 0) pdf.addPage()
         const pdfWidth = pdf.internal.pageSize.getWidth()
         const pdfHeight = pdf.internal.pageSize.getHeight()
-        pdf.addImage(imgData, "JPEG", 0, 0, pdfWidth, pdfHeight)
+        pdf.addImage(imgData, "PNG", 0, 0, pdfWidth, pdfHeight)
       }
       pdf.save("scanned-doc.pdf")
     } else {
@@ -705,7 +759,7 @@ export const ScannerScreen = () => {
           </ScannerFrame>
         </div>
         {error && <Status tone="error">{error}</Status>}
-        {/* <SegmentedControl
+        <SegmentedControl
           label={t("scannerScreen.filterLabel")}
           value={filter}
           onChange={(value) => setFilter(value as ScanFilter)}
@@ -714,7 +768,7 @@ export const ScannerScreen = () => {
             { value: "grayscale", label: t("scannerScreen.filterGrayscale") },
             { value: "text", label: t("scannerScreen.filterText") },
           ]}
-        /> */}
+        />
         <section className="pui-footer">
           <Button
             variant="secondary"
