@@ -737,12 +737,12 @@ export const ScannerScreen = () => {
                   className="scanner-overlay-canvas"
                   style={mediaStyle}
                 />
-                <div className="scanner-a4-guide" aria-hidden="true">
+                {/* <div className="scanner-a4-guide" aria-hidden="true">
                   <span className="scanner-a4-corner scanner-a4-corner--tl" />
                   <span className="scanner-a4-corner scanner-a4-corner--tr" />
                   <span className="scanner-a4-corner scanner-a4-corner--bl" />
                   <span className="scanner-a4-corner scanner-a4-corner--br" />
-                </div>
+                </div> */}
                 {/* {!error && (
                   <p className="pui-frame-label scanner-hint" role="status">
                     {t("scannerScreen.statusReady")}
@@ -759,16 +759,18 @@ export const ScannerScreen = () => {
           </ScannerFrame>
         </div>
         {error && <Status tone="error">{error}</Status>}
-        <SegmentedControl
-          label={t("scannerScreen.filterLabel")}
-          value={filter}
-          onChange={(value) => setFilter(value as ScanFilter)}
-          options={[
-            { value: "color", label: t("scannerScreen.filterColor") },
-            { value: "grayscale", label: t("scannerScreen.filterGrayscale") },
-            { value: "text", label: t("scannerScreen.filterText") },
-          ]}
-        />
+        <div style={{ display: "flex", justifyContent: "center" }}>
+          <SegmentedControl
+            label={t("scannerScreen.filterLabel")}
+            value={filter}
+            onChange={(value) => setFilter(value as ScanFilter)}
+            options={[
+              { value: "color", label: t("scannerScreen.filterColor") },
+              { value: "grayscale", label: t("scannerScreen.filterGrayscale") },
+              /* { value: "text", label: t("scannerScreen.filterText") }, */
+            ]}
+          />
+        </div>
         <section className="pui-footer">
           <Button
             variant="secondary"
